@@ -1,14 +1,8 @@
 """
-YouTube Video Analyzer - FULLY INTERACTIVE (User Input Based)
-No command-line arguments needed. Everything is asked step-by-step.
+YOUTUBE VIDEO ANALYZER PRO - DEEP ANALYSIS EDITION
+Interactive | Bulk Support | Views, Likes, Duration, Country, Engagement
 
-Features:
-- Single or Bulk (from .txt file) YouTube video analysis
-- Input via interactive prompts
-- Uses YouTube API v3 (accurate date/time) or yt-dlp fallback
-- Outputs: Console Table + CSV + Optional JSON
-
-Author:@YLdplayer85479 (Pakistan)
+Author: Grok (xAI) | @YLdplayer85479 (Pakistan)
 """
 
 import os
@@ -18,6 +12,7 @@ import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Optional
 import re
+import requests
 
 # Optional: YouTube API
 try:
@@ -37,19 +32,22 @@ from tqdm import tqdm
 
 
 # ========================================
-#           YOUTUBE ANALYZER CLASS
+#           YOUTUBE ANALYZER PRO CLASS
 # ========================================
-class YouTubeAnalyzer:
-    def __init__(self, api_key: Optional[str] = None, use_api: bool = True):
-        self.api_key = api_key or os.getenv("YOUTUBE_API_KEY")
-        self.use_api = use_api and API_AVAILABLE and bool(self.api_key)
+class YouTubeAnalyzerPro:
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("AIzaSyA5nB0VKjC8_gnpjRNXraM29CpUNpjMKpA")
+        self.use_api = API_AVAILABLE and bool(self.api_key)
         self.youtube = None
         if self.use_api:
             try:
                 self.youtube = build('youtube', 'v3', developerKey=self.api_key)
             except Exception as e:
-                print(f"Warning: API build failed: {e}. Falling back to yt-dlp.")
+                print(f"API init failed: {e}. Using yt-dlp fallback.")
                 self.use_api = False
+
+        # ReturnYouTubeDislike API
+        self.rtd_api = "https://returnyoutubedislikeapi.com/votes?videoId="
 
     def extract_video_id(self, url: str) -> Optional[str]:
         patterns = [
@@ -58,38 +56,120 @@ class YouTubeAnalyzer:
             r'(?:shorts\/)([0-9A-Za-z_-]{11})',
             r'youtu\.be\/([0-9A-Za-z_-]{11})',
         ]
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
+        for p in patterns:
+            m = re.search(p, url)
+            if m:
+                return m.group(1)
         return None
 
     def extract_hashtags(self, text: str) -> List[str]:
         return list(set(re.findall(r'#\w+', text)))
 
+    def format_duration(self, iso_duration: str) -> str:
+        """Convert ISO 8601 duration (PT1H2M3S) to HH:MM:SS"""
+        if not iso_duration:
+            return "N/A"
+        duration = iso_duration.replace("PT", "")
+        hours, minutes, seconds = 0, 0, 0
+        if 'H' in duration:
+            hours, duration = duration.split('H')
+        if 'M' in duration:
+            minutes, duration = duration.split('M')
+        if 'S' in duration:
+            seconds = duration.replace('S', '')
+        try:
+            return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+        except:
+            return "N/A"
+
+    def get_dislikes(self, video_id: str) -> int:
+        try:
+            resp = requests.get(self.rtd_api + video_id, timeout=5)
+            if resp.status_code == 200:
+                return resp.json().get("dislikes", 0)
+        except:
+            pass
+        return 0
+
     def get_video_data_api(self, video_id: str) -> Optional[Dict]:
         try:
-            request = self.youtube.videos().list(
-                part='snippet,contentDetails,statistics',
+            req = self.youtube.videos().list(
+                part='snippet,contentDetails,statistics,topicDetails',
                 id=video_id
             )
-            response = request.execute()
-            if not response['items']:
+            res = req.execute()
+            if not res['items']:
                 return None
 
-            item = response['items'][0]['snippet']
-            published_at = item['publishedAt']
+            item = res['items'][0]
+            sn = item['snippet']
+            st = item['statistics']
+            cd = item['contentDetails']
 
+            # Duration
+            duration = self.format_duration(cd.get('duration', ''))
+
+            # Views, Likes
+            views = int(st.get('viewCount', 0))
+            likes = int(st.get('likeCount', 0))
+            comments = int(st.get('commentCount', 0))
+            dislikes = self.get_dislikes(video_id)
+
+            # Engagement
+            engagement = round((likes / views) * 100, 2) if views > 0 else 0
+
+            # Performance Score (0-100)
+            score = 0
+            if views > 1_000_000: score += 30
+            elif views > 100_000: score += 20
+            elif views > 10_000: score += 10
+            if engagement > 5: score += 20
+            elif engagement > 2: score += 10
+            if likes > 10_000: score += 20
+            score = min(score, 100)
+
+            # Country
+            country = sn.get('country', 'N/A')
+            if country == 'N/A' and sn.get('defaultLanguage'):
+                lang = sn['defaultLanguage']
+                country = {
+                    'en': 'US', 'es': 'ES', 'hi': 'IN', 'ar': 'SA',
+                    'pt': 'BR', 'fr': 'FR', 'de': 'DE', 'ru': 'RU'
+                }.get(lang[:2], 'Global')
+
+            # Category
+            cat_id = sn.get('categoryId', '')
+            categories = {
+                '1': 'Film & Animation', '2': 'Autos', '10': 'Music', '15': 'Pets',
+                '17': 'Sports', '20': 'Gaming', '22': 'People & Blogs', '23': 'Comedy',
+                '24': 'Entertainment', '25': 'News', '26': 'Howto', '27': 'Education',
+                '28': 'Science & Tech'
+            }
+            category = categories.get(cat_id, 'Unknown')
+
+            published_at = sn['publishedAt']
             dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+
             return {
                 'video_id': video_id,
-                'title': item['title'],
+                'title': sn['title'],
                 'upload_date': dt.date().isoformat(),
                 'upload_time': dt.time().strftime('%H:%M:%S'),
                 'upload_datetime': published_at,
-                'description': item['description'],
-                'channel_title': item['channelTitle'],
-                'hashtags': self.extract_hashtags(item['description'] + ' ' + item['title']),
+                'duration': duration,
+                'views': views,
+                'likes': likes,
+                'dislikes': dislikes,
+                'comments': comments,
+                'engagement_rate_%': engagement,
+                'performance_score': score,
+                'description': sn['description'],
+                'channel_title': sn['channelTitle'],
+                'channel_id': sn['channelId'],
+                'country': country,
+                'category': category,
+                'hashtags': self.extract_hashtags(sn['description'] + ' ' + sn['title']),
+                'thumbnail': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
                 'url': f'https://www.youtube.com/watch?v={video_id}'
             }
         except Exception as e:
@@ -109,23 +189,42 @@ class YouTubeAnalyzer:
                 video_id = info.get('id')
                 upload_date = info.get('upload_date')
                 if upload_date:
-                    date_obj = datetime.strptime(upload_date, '%Y%m%d')
-                    upload_date_str = date_obj.date().isoformat()
-                    upload_time_str = '00:00:00'
+                    dt = datetime.strptime(upload_date, '%Y%m%d')
+                    date_str = dt.date().isoformat()
+                    time_str = '00:00:00'
                 else:
-                    upload_date_str = upload_time_str = 'N/A'
+                    date_str = time_str = 'N/A'
+
+                duration = info.get('duration', 0)
+                dur_str = f"{duration//3600:02d}:{(duration%3600)//60:02d}:{duration%60:02d}" if duration else "N/A"
+
+                views = info.get('view_count', 0)
+                likes = info.get('like_count', 0)
+                dislikes = self.get_dislikes(video_id) if video_id else 0
+                comments = info.get('comment_count', 0)
 
                 return {
                     'video_id': video_id,
                     'title': info.get('title', 'N/A'),
-                    'upload_date': upload_date_str,
-                    'upload_time': upload_time_str,
-                    'upload_datetime': info.get('upload_date', 'N/A'),
+                    'upload_date': date_str,
+                    'upload_time': time_str,
+                    'upload_datetime': upload_date or 'N/A',
+                    'duration': dur_str,
+                    'views': views,
+                    'likes': likes,
+                    'dislikes': dislikes,
+                    'comments': comments,
+                    'engagement_rate_%': round((likes/views)*100, 2) if views else 0,
+                    'performance_score': 0,
                     'description': info.get('description', 'N/A'),
                     'channel_title': info.get('uploader', 'N/A'),
+                    'channel_id': info.get('channel_id', 'N/A'),
+                    'country': 'N/A',
+                    'category': info.get('category', 'N/A'),
                     'hashtags': self.extract_hashtags(
                         info.get('description', '') + ' ' + info.get('title', '')
                     ),
+                    'thumbnail': info.get('thumbnail', ''),
                     'url': url
                 }
         except Exception as e:
@@ -152,148 +251,136 @@ class YouTubeAnalyzer:
             urls = [line.strip() for line in f if line.strip() and ('youtube.com' in line or 'youtu.be' in line)]
 
         if not urls:
-            print("   No valid YouTube URLs found in file.")
+            print("   No valid URLs found.")
             return []
 
         print(f"\n   Analyzing {len(urls)} video(s)...")
         results = []
-        for url in tqdm(urls, desc="   Progress", unit="video", leave=False):
+        for url in tqdm(urls, desc="   Progress", unit="vid", leave=False):
             data = self.analyze_single(url)
             if data:
                 results.append(data)
             else:
                 vid = self.extract_video_id(url) or 'N/A'
                 results.append({
-                    'video_id': vid,
-                    'title': 'ERROR',
-                    'upload_date': 'N/A',
-                    'upload_time': 'N/A',
-                    'description': 'Failed to fetch',
-                    'channel_title': 'N/A',
-                    'hashtags': [],
-                    'url': url
+                    'video_id': vid, 'title': 'ERROR', 'upload_date': 'N/A', 'duration': 'N/A',
+                    'views': 0, 'likes': 0, 'dislikes': 0, 'comments': 0,
+                    'engagement_rate_%': 0, 'performance_score': 0,
+                    'description': 'Failed', 'channel_title': 'N/A', 'country': 'N/A',
+                    'hashtags': [], 'url': url
                 })
         return results
 
     def print_table(self, data: List[Dict]):
         if not data:
-            print("\n   No data to display.")
+            print("\n   No data.")
             return
 
-        print("\n" + "="*130)
-        print(f"{'#':<3} {'Title':<50} {'Date':<12} {'Time':<8} {'Hashtags':<35} {'Channel':<20}")
-        print("="*130)
-        for i, row in enumerate(data, 1):
-            title = (row['title'][:47] + '...') if len(row['title']) > 50 else row['title']
-            hashtags = ', '.join(row['hashtags']) if row['hashtags'] else 'None'
-            hashtags = (hashtags[:32] + '...') if len(hashtags) > 35 else hashtags
-            channel = (row['channel_title'][:17] + '...') if len(row['channel_title']) > 20 else row['channel_title']
-            print(f"{i:<3} {title:<50} {row['upload_date']:<12} {row['upload_time']:<8} {hashtags:<35} {channel}")
-        print("="*130 + "\n")
+        print("\n" + "="*160)
+        print(f"{'#':<3} {'Title':<45} {'Views':<10} {'Likes':<8} {'Dur':<8} {'Country':<8} {'Score':<6} {'Eng%'}")
+        print("="*160)
+        for i, r in enumerate(data, 1):
+            title = (r['title'][:42] + '...') if len(r['title']) > 45 else r['title']
+            views = f"{r['views']//1000}K" if r['views'] >= 1000 else str(r['views'])
+            likes = f"{r['likes']//1000}K" if r['likes'] >= 1000 else str(r['likes'])
+            print(f"{i:<3} {title:<45} {views:<10} {likes:<8} {r['duration']:<8} {r['country']:<8} {r['performance_score']:<6} {r['engagement_rate_%']}")
+        print("="*160 + "\n")
 
     def export_to_csv(self, data: List[Dict], filename: str):
         df = pd.DataFrame(data)
-        df['hashtags'] = df['hashtags'].apply(lambda x: ', '.join(x) if isinstance(x, list) else '')
+        df['hashtags'] = df['hashtags'].apply(lambda x: ', '.join(x))
         df.to_csv(filename, index=False, encoding='utf-8')
-        print(f"   CSV saved: {filename}")
+        print(f"   CSV → {filename}")
+
+    def export_to_excel(self, data: List[Dict], filename: str):
+        df = pd.DataFrame(data)
+        df['hashtags'] = df['hashtags'].apply(lambda x: ', '.join(x))
+        df.to_excel(filename, index=False)
+        print(f"   Excel → {filename}")
 
     def export_to_json(self, data: List[Dict], filename: str):
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        print(f"   JSON saved: {filename}")
+        print(f"   JSON → {filename}")
 
 
 # ========================================
 #              INTERACTIVE MENU
 # ========================================
 def interactive_menu():
-    print("\n" + "="*60)
-    print("   YOUTUBE VIDEO ANALYZER (Interactive Mode)")
-    print("   Created by Grok (xAI) | @YLdplayer85479 (Pakistan)")
-    print("="*60)
+    print("\n" + "="*70)
+    print("   YOUTUBE ANALYZER PRO - DEEP STATS EDITION")
+    print("   Views | Likes | Duration | Country | Engagement | Score")
+    print("   Created by Muhammad Yousuf(Pakistan)")
+    print("="*70)
 
-    # --- API Key Input ---
+    # API Key
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
-        print("\n   YouTube API Key not found in environment.")
-        choice = input("   Do you want to enter API key now? (y/n): ").strip().lower()
-        if choice == 'y':
-            api_key = input("   Enter your YouTube Data API v3 Key: ").strip()
+        ch = input("\n   Enter YouTube API Key? (y/n): ").strip().lower()
+        if ch == 'y':
+            api_key = input("   API Key: ").strip()
         else:
-            print("   Proceeding without API key (using yt-dlp fallback).")
-            api_key = None
+            print("   Using yt-dlp (limited stats).")
     else:
-        print(f"   API Key loaded from environment.")
+        print("   API Key loaded.")
 
-    analyzer = YouTubeAnalyzer(api_key=api_key, use_api=True)
+    analyzer = YouTubeAnalyzerPro(api_key=api_key)
 
     if analyzer.use_api:
-        print("   Using YouTube Data API v3 (Accurate Date & Time)")
+        print("   Using YouTube API v3 (Full Stats)")
     else:
         if not YTDLP_AVAILABLE:
-            print("   ERROR: yt-dlp not installed!")
-            print("   Install: pip install yt-dlp")
+            print("   ERROR: Install yt-dlp → pip install yt-dlp")
             return
-        print("   Using yt-dlp (Upload time may show 00:00:00)")
+        print("   Using yt-dlp (No country/duration)")
 
-    # --- Mode Selection ---
-    print("\n   Choose analysis mode:")
-    print("   1. Single Video")
+    # Mode
+    print("\n   1. Single Video")
     print("   2. Bulk from TXT File")
-    mode = input("   Enter 1 or 2: ").strip()
+    mode = input("   Choose (1/2): ").strip()
 
     data = []
-
     if mode == '1':
-        url = input("\n   Enter YouTube URL: ").strip()
-        if not url:
-            print("   No URL entered.")
-            return
+        url = input("\n   YouTube URL: ").strip()
+        if not url: return
         print("   Analyzing...")
-        result = analyzer.analyze_single(url)
-        if result:
-            data = [result]
-            print("   Success!")
+        res = analyzer.analyze_single(url)
+        if res:
+            data = [res]
+            print("   Done!")
         else:
-            print("   Failed to analyze video.")
             return
-
     elif mode == '2':
-        file_path = input("\n   Enter path to TXT file (one URL per line): ").strip()
-        if not file_path:
-            print("   No file path entered.")
-            return
-        data = analyzer.analyze_bulk_from_file(file_path)
-        if not data:
-            return
-
+        path = input("\n   TXT File Path: ").strip()
+        if not path: return
+        data = analyzer.analyze_bulk_from_file(path)
+        if not data: return
     else:
-        print("   Invalid choice.")
+        print("   Invalid.")
         return
 
-    # --- Show Results ---
+    # Show
     analyzer.print_table(data)
 
-    # --- Export Options ---
-    print("   Export options:")
-    export_csv = input("   Save as CSV? (y/n): ").strip().lower() == 'y'
-    csv_file = "youtube_analysis.csv"
-    if export_csv:
-        csv_file = input(f"   CSV filename [default: {csv_file}]: ").strip() or csv_file
+    # Export
+    print("\n   Export:")
+    csv = input("   CSV? (y/n): ").lower() == 'y'
+    xlsx = input("   Excel? (y/n): ").lower() == 'y'
+    json_exp = input("   JSON? (y/n): ").lower() == 'y'
 
-    export_json = input("   Save as JSON? (y/n): ").strip().lower() == 'y'
-    json_file = "youtube_analysis.json"
-    if export_json:
-        json_file = input(f"   JSON filename [default: {json_file}]: ").strip() or json_file
+    base = "youtube_analysis"
+    if csv:
+        f = input(f"   CSV name [{base}.csv]: ") or f"{base}.csv"
+        analyzer.export_to_csv(data, f)
+    if xlsx:
+        f = input(f"   Excel name [{base}.xlsx]: ") or f"{base}.xlsx"
+        analyzer.export_to_excel(data, f)
+    if json_exp:
+        f = input(f"   JSON name [{base}.json]: ") or f"{base}.json"
+        analyzer.export_to_json(data, f)
 
-    # --- Save Files ---
-    if export_csv and data:
-        analyzer.export_to_csv(data, csv_file)
-    if export_json and data:
-        analyzer.export_to_json(data, json_file)
-
-    print("\n   Analysis complete! Thank you for using the tool.")
-    print("   Follow @YLdplayer85479 for updates!\n")
+    print("\n   All done! Follow @YLdplayer85479 for updates!\n")
 
 
 # ========================================
@@ -301,13 +388,12 @@ def interactive_menu():
 # ========================================
 if __name__ == '__main__':
     if not API_AVAILABLE and not YTDLP_AVAILABLE:
-        print("Please install required packages:")
-        print("pip install google-api-python-client pandas yt-dlp tqdm")
+        print("Install: pip install google-api-python-client pandas yt-dlp tqdm openpyxl requests")
         sys.exit(1)
 
     try:
         interactive_menu()
     except KeyboardInterrupt:
-        print("\n\n   Operation cancelled by user. Goodbye!")
+        print("\n\n   Cancelled. Bye!")
     except Exception as e:
-        print(f"\n   Unexpected error: {e}")
+        print(f"\n   Error: {e}")
