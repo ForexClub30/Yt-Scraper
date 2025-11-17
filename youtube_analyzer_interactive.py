@@ -36,7 +36,7 @@ from tqdm import tqdm
 # ========================================
 class YouTubeAnalyzerPro:
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("AIzaSyA5nB0VKjC8_gnpjRNXraM29CpUNpjMKpA")
+        self.api_key = api_key or os.getenv("ENTER API KEY")
         self.use_api = API_AVAILABLE and bool(self.api_key)
         self.youtube = None
         if self.use_api:
